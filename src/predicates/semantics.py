@@ -153,6 +153,27 @@ class Model(Generic[T]):
         for function, arity in term.functions():
             assert function in self.function_interpretations and self.function_arities[function] == arity
         # Task 7.7
+        
+        # Если терм - константа
+        if is_constant(term.root):
+            return self.constant_interpretations[term.root]
+        
+        # Если терм - переменная
+        elif is_variable(term.root):
+            return assignment[term.root]
+        
+        # Если терм - функция
+        else:  # is_function(term.root)
+            # Рекурсивно вычисляем значения аргументов
+            argument_values = []
+            for arg in term.arguments:
+                argument_values.append(self.evaluate_term(arg, assignment))
+            
+            # Создаем кортеж из значений аргументов
+            argument_tuple = tuple(argument_values)
+            
+            # Возвращаем результат применения функции
+            return self.function_interpretations[term.root][argument_tuple]
 
     def evaluate_formula(self, formula: Formula, assignment: Mapping[str, T] = frozendict()) -> bool:
         """Calculates the truth value of the given formula in the current model
@@ -179,6 +200,71 @@ class Model(Generic[T]):
             assert relation in self.relation_interpretations and self.relation_arities[relation] in {-1, arity}
         # Task 7.8
 
+        # Равенство
+        if is_equality(formula.root):
+            # Вычисляем значения двух термов и проверяем их равенство
+            value1 = self.evaluate_term(formula.arguments[0], assignment)
+            value2 = self.evaluate_term(formula.arguments[1], assignment)
+            return value1 == value2
+        
+        # Отношение
+        elif is_relation(formula.root):
+            # Вычисляем значения всех термов-аргументов
+            argument_values = []
+            for term in formula.arguments:
+                argument_values.append(self.evaluate_term(term, assignment))
+            
+            # Проверяем, принадлежит ли кортеж значений аргументов интерпретации отношения
+            return tuple(argument_values) in self.relation_interpretations[formula.root]
+        
+        # Отрицание
+        elif formula.root == '~':
+            # Отрицаем результат рекурсивного вычисления подформулы
+            return not self.evaluate_formula(formula.first, assignment)
+        
+        # Бинарные операции
+        elif is_binary(formula.root):
+            # Вычисляем значения обеих подформул
+            value1 = self.evaluate_formula(formula.first, assignment)
+            value2 = self.evaluate_formula(formula.second, assignment)
+            
+            # Применяем соответствующую операцию
+            if formula.root == '&':
+                return value1 and value2
+            elif formula.root == '|':
+                return value1 or value2
+            elif formula.root == '->':
+                return (not value1) or value2
+        
+        # Кванторы
+        elif is_quantifier(formula.root):
+            variable = formula.variable
+            
+            # Для каждого элемента универсума
+            for element in self.universe:
+                # Создаем новое назначение с добавленной или обновленной переменной квантора
+                new_assignment = dict(assignment)
+                new_assignment[variable] = element
+                
+                # Для квантора всеобщности
+                if formula.root == 'A':
+                    # Если найдется хоть один элемент, для которого формула ложна,
+                    # то вся формула с квантором всеобщности ложна
+                    if not self.evaluate_formula(formula.statement, new_assignment):
+                        return False
+                
+                # Для квантора существования
+                else:  # formula.root == 'E'
+                    # Если найдется хоть один элемент, для которого формула истинна,
+                    # то вся формула с квантором существования истинна
+                    if self.evaluate_formula(formula.statement, new_assignment):
+                        return True
+            
+            # Если мы прошли весь универсум:
+            # - для квантора всеобщности возвращаем True (формула истинна для всех элементов)
+            # - для квантора существования возвращаем False (формула ложна для всех элементов)
+            return formula.root == 'A'
+
     def is_model_of(self, formulas: AbstractSet[Formula]) -> bool:
         """Checks if the current model is a model of the given formulas.
 
@@ -199,3 +285,34 @@ class Model(Generic[T]):
             for relation, arity in formula.relations():
                 assert relation in self.relation_interpretations and self.relation_arities[relation] in {-1, arity}
         # Task 7.9
+        
+        from itertools import product
+        
+        # Проверяем каждую формулу
+        for formula in formulas:
+            # Получаем все свободные переменные в формуле
+            free_vars = formula.free_variables()
+            
+            # Если нет свободных переменных, просто проверяем формулу
+            if not free_vars:
+                if not self.evaluate_formula(formula):
+                    return False
+                continue
+            
+            # Перебираем все возможные комбинации значений для свободных переменных
+            vars_list = list(free_vars)
+            
+            # Для каждой комбинации значений для переменных из универсума
+            for values in product(self.universe, repeat=len(vars_list)):
+                # Создаем назначение переменных
+                assignment = {vars_list[i]: values[i] for i in range(len(vars_list))}
+                
+                # Если формула ложна хотя бы при одном назначении,
+                # то модель не является моделью для формулы
+                if not self.evaluate_formula(formula, assignment):
+                    return False
+        
+        # Если все формулы истинны при всех возможных назначениях, 
+        # то модель является моделью для всех формул
+        return True
+
